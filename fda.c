@@ -1,22 +1,9 @@
-#include <unistd.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <glib.h>
-#include <math.h>
-#include "procinfo.h"
-#include "foreach.h"
-#include "minialloc.h"
-#include "token.h"
-#include "sentence.h"
-#include "heap.h"
-#include "ngram.h"
-#define msg1 if(verbosity_level>=1)g_message
-#define msg2 if(verbosity_level>=2)g_message
+#include "fda.h"
 
 /* Default options */
 guint verbosity_level = 1;
 guint ngram_order = 3;
-guint output1_words = 100000;
+guint output_words = 100000;
 double idf_exponent = 1.0;
 double ngram_length_exponent = 1.0;
 double decay_factor = 0.5;
@@ -26,32 +13,13 @@ char *test_file2 = NULL;
 char *train_file1 = NULL;
 char *train_file2 = NULL;
 
-/* Function declarations */
-
-static GHashTable *init_features(GPtrArray *sent, guint *bgcnt_ptr);
-static guint init_train_count(GHashTable *feats, GPtrArray *sent);
-static void init_feature_scores(gpointer key, gpointer val, gpointer dat);
-static Heap init_sentence_heap(GHashTable *feat, GPtrArray *sent);
-static gfloat sentence_score(Sentence s, GHashTable *feat);
-static guint next_best_training_instance(Heap h, GPtrArray *sent, GHashTable *feat, gfloat *score_ptr, guint *niter_ptr);
-static guint update_counts(GHashTable *feat, Sentence s);
-
-/* Types */
-typedef struct feat_s {
-  guint train_cnt;
-  guint output_cnt;
-  double fscore0;
-  double fscore1;
-} *feat_t;
-
-
 int main(int argc, char **argv) {
   g_message_init();
   int opt;
   while ((opt = getopt(argc, argv, "n:t:i:l:f:s:v:1:2:")) != -1) {
     switch (opt) {
     case 'n': ngram_order = atoi(optarg); break;
-    case 't': output1_words = atoi(optarg); break;
+    case 't': output_words = atoi(optarg); break;
     case 'i': idf_exponent = atof(optarg); break;
     case 'l': ngram_length_exponent = atof(optarg); break;
     case 'f': decay_factor = atof(optarg); break;
@@ -79,21 +47,21 @@ int main(int argc, char **argv) {
   GPtrArray *test2 = read_sentences(test_file2);
   g_assert(test1->len == test2->len);
 
-  guint bgcnt1, bgcnt2;
+  guint bigram_cnt1, bigram_cnt2;
   msg2("init_features1");
-  GHashTable *features1 = init_features(test1, &bgcnt1);
+  GHashTable *features1 = init_features(test1, &bigram_cnt1);
   msg2("init_features2");
-  GHashTable *features2 = init_features(test2, &bgcnt2);
+  GHashTable *features2 = init_features(test2, &bigram_cnt2);
   msg2("init_train_count");
-  guint train1_words = (idf_exponent == 0) ? 0 : init_train_count(features1, train1);
+  guint train_size1 = (idf_exponent == 0) ? 0 : init_train_count(features1, train1);
   msg2("init_feature_scores");
-  g_hash_table_foreach(features1, init_feature_scores, &train1_words);
+  g_hash_table_foreach(features1, init_feature_scores, &train_size1);
   msg2("init_sentence_heap");
   Heap heap = init_sentence_heap(features1, train1);
   guint nword1 = 0;
   guint nword2 = 0;
-  guint bgmatch1 = 0;
-  guint bgmatch2 = 0;
+  guint bigram_match1 = 0;
+  guint bigram_match2 = 0;
   
   msg2("Writing...");
   while (1) {
@@ -105,41 +73,35 @@ int main(int argc, char **argv) {
     Sentence s2 = g_ptr_array_index(train2, best_sentence);
     nword1 += sentence_size(s1);
     nword2 += sentence_size(s2);
-    bgmatch1 += update_counts(features1, s1);
-    bgmatch2 += update_counts(features2, s2);
+    bigram_match1 += update_counts(features1, s1);
+    bigram_match2 += update_counts(features2, s2);
     print_sentence(s1); putchar('\t'); print_sentence(s2);
-    printf("\t%g\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", best_score, nscore, nword1, nword2, bgcnt1, bgcnt2, bgmatch1, bgmatch2);
-    if (nword1 >= output1_words) break;
+    printf("\t%g\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", best_score, nscore, nword1, 
+	   nword2, bigram_cnt1, bigram_cnt2, bigram_match1, bigram_match2);
+    if (nword1 >= output_words) break;
   }
   minialloc_free_all();
   msg1("-1%s -2%s -f%g -i%g -l%g -n%d -s%g -t%d -v%d %s %s\t%d\t%d\t%d\t%d\t%d\t%d",
        test_file1, test_file2, decay_factor, idf_exponent, ngram_length_exponent,
-       ngram_order, sentence_length_exponent, output1_words, verbosity_level,
-       train_file1, train_file2, nword1, nword2, bgcnt1, bgcnt2, bgmatch1, bgmatch2);
+       ngram_order, sentence_length_exponent, output_words, verbosity_level,
+       train_file1, train_file2, nword1, nword2, bigram_cnt1, bigram_cnt2, 
+       bigram_match1, bigram_match2);
 }
 
-static GHashTable *init_features(GPtrArray *sent, guint *bgcnt_ptr) {
+static GHashTable *init_features(GPtrArray *sent, guint *bigram_cnt) {
   GHashTable *feats = g_hash_table_new(ngram_hash, ngram_equal);
-  guint bgcnt = 0;
+  *bigram_cnt = 0;
   for (int si = 0; si < sent->len; si++) {
     Sentence s = g_ptr_array_index(sent, si);
-    for (guint i = 1; i < sentence_size(s); i++) {
-      for (guint n = 1; n <= ngram_order; n++) {
-	if (i + n - 1 > sentence_size(s)) break;
-	Ngram ng = &s[i-1];
-	guint32 save = ng[0];
-	ng[0] = n;
-	if (g_hash_table_lookup(feats, ng) == NULL) {
-	  feat_t f = minialloc(sizeof(struct feat_s));
-	  f->output_cnt = 0; f->train_cnt = 0; f->fscore0 = 0; f->fscore1 = 0;
-	  g_hash_table_insert(feats, ngram_dup(ng), f);
-	  if (n == 2) bgcnt++;
-	}
-	ng[0] = save;
+    foreach_ngram(ng, s) {
+      if (g_hash_table_lookup(feats, ng) == NULL) {
+	feat_t f = minialloc(sizeof(struct feat_s));
+	f->output_cnt = 0; f->train_cnt = 0; f->fscore0 = 0; f->fscore1 = 0;
+	g_hash_table_insert(feats, ngram_dup(ng), f);
+	if (ngram_size(ng) == 2) (*bigram_cnt)++;
       }
     }
   }
-  *bgcnt_ptr = bgcnt;
   return feats;
 }
 
@@ -148,16 +110,9 @@ static guint init_train_count(GHashTable *feats, GPtrArray *sent) {
   for (int si = 0; si < sent->len; si++) {
     Sentence s = g_ptr_array_index(sent, si);
     nwords += sentence_size(s);
-    for (guint i = 1; i < sentence_size(s); i++) {
-      for (guint n = 1; n <= ngram_order; n++) {
-	if (i + n - 1 > sentence_size(s)) break;
-	Ngram ng = &s[i-1];
-	guint32 save = ng[0];
-	ng[0] = n;
-	feat_t f = g_hash_table_lookup(feats, ng);
-	ng[0] = save;
-	if (f != NULL) f->train_cnt++;
-      }
+    foreach_ngram(ng, s) {
+      feat_t f = g_hash_table_lookup(feats, ng);
+      if (f != NULL) f->train_cnt++;
     }
   }
   return nwords;
@@ -166,17 +121,20 @@ static guint init_train_count(GHashTable *feats, GPtrArray *sent) {
 static void init_feature_scores(gpointer key, gpointer val, gpointer dat) {
   Ngram ng = key;
   feat_t f = val;
-  int *train1_words = dat;
   f->fscore0 = 1;
   if (ngram_length_exponent != 0) {
-    guint32 n = ngram_size(ng);
-    f->fscore0 *= pow((double) n, ngram_length_exponent);
+    double x = (double) ngram_size(ng);
+    if (ngram_length_exponent != 1) 
+      x = pow(x, ngram_length_exponent);
+    f->fscore0 *= x;
   }
   if (idf_exponent != 0) {
+    guint *train_size1 = dat;
     guint fcnt = f->train_cnt;
     if (fcnt == 0) fcnt = 1;
-    double idf = -log((double) fcnt / (double) (*train1_words));
-    f->fscore0 *= pow(idf, idf_exponent);
+    double idf = -log((double) fcnt / (double) (*train_size1));
+    if (idf_exponent != 1) idf = pow(idf, idf_exponent);
+    f->fscore0 *= idf;
   }
   f->fscore1 = f->fscore0;
 }
@@ -194,19 +152,15 @@ static Heap init_sentence_heap(GHashTable *feat, GPtrArray *sent) {
 
 static gfloat sentence_score(Sentence s, GHashTable *feat) {
   gfloat score = 0;
-  for (guint i = 1; i < sentence_size(s); i++) {
-    for (guint n = 1; n <= ngram_order; n++) {
-      if (i + n - 1 > sentence_size(s)) break;
-      Ngram ng = &s[i-1];
-      guint32 save = ng[0];
-      ng[0] = n;
-      feat_t f = g_hash_table_lookup(feat, ng);
-      ng[0] = save;
-      if (f != NULL) score += f->fscore1;
-    }
+  foreach_ngram(ng, s) {
+    feat_t f = g_hash_table_lookup(feat, ng);
+    if (f != NULL) score += f->fscore1;
   }
   if (sentence_length_exponent != 0) {
-    score /= pow(sentence_size(s), sentence_length_exponent);
+    double x = (double) sentence_size(s);
+    if (sentence_length_exponent != 1)
+      x = pow(x, sentence_length_exponent);
+    score /= x;
   }
   return score;
 }
@@ -231,26 +185,19 @@ static guint next_best_training_instance(Heap h, GPtrArray *sent, GHashTable *fe
 }
 
 static guint update_counts(GHashTable *feat, Sentence s) {
-  guint bgmatch = 0;
-  for (guint i = 1; i < sentence_size(s); i++) {
-    for (guint n = 1; n <= ngram_order; n++) {
-      if (i + n - 1 > sentence_size(s)) break;
-      Ngram ng = &s[i-1];
-      guint32 save = ng[0];
-      ng[0] = n;
-      feat_t f = g_hash_table_lookup(feat, ng);
-      ng[0] = save;
-      if (f != NULL) {
-	if ((n==2) && (f->output_cnt == 0)) bgmatch++;
-	f->output_cnt++;
-	if (decay_factor >= 1) {
-	  f->fscore1 = f->fscore0 / (1.0 + f->output_cnt);
-	} else if (decay_factor > 0) {
-	  f->fscore1 = f->fscore0 * pow(decay_factor, f->output_cnt);
-	}
+  guint bigram_match = 0;
+  foreach_ngram(ng, s) {
+    feat_t f = g_hash_table_lookup(feat, ng);
+    if (f != NULL) {
+      if ((ngram_size(ng) == 2) && (f->output_cnt == 0)) bigram_match++;
+      f->output_cnt++;
+      if (decay_factor >= 1) {
+	f->fscore1 = f->fscore0 / (1.0 + f->output_cnt);
+      } else if (decay_factor > 0) {
+	f->fscore1 = f->fscore0 * pow(decay_factor, f->output_cnt);
       }
     }
   }
-  return bgmatch;
+  return bigram_match;
 }
 

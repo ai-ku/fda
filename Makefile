@@ -7,7 +7,7 @@ all: fda
 fda: fda.o minialloc.o ngram.o sentence.o heap.o
 	$(CC) $(CFLAGS) $^ $(LIBS) -o $@
 
-fda.o: fda.c procinfo.h foreach.h minialloc.h token.h ngram.h sentence.h heap.h
+fda.o: fda.c fda.h procinfo.h foreach.h minialloc.h token.h ngram.h sentence.h heap.h
 	$(CC) -c $(CFLAGS) $< -o $@
 
 sentence.o: sentence.c sentence.h foreach.h token.h

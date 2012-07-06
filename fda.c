@@ -156,7 +156,7 @@ static gfloat sentence_score(Sentence s, GHashTable *feat) {
     feat_t f = g_hash_table_lookup(feat, ng);
     if (f != NULL) score += f->fscore1;
   }
-  if (sentence_length_exponent != 0) {
+  if ((sentence_length_exponent != 0) && (sentence_size(s) > 0)) {
     double x = (double) sentence_size(s);
     if (sentence_length_exponent != 1)
       x = pow(x, sentence_length_exponent);
@@ -176,7 +176,7 @@ static guint next_best_training_instance(Heap h, GPtrArray *sent, GHashTable *fe
     best_score = sentence_score(g_ptr_array_index(sent, best_sentence), feat);
     heap_delete_max(h);
     if (heap_size(h) == 0) break;
-    if (best_score >= heap_top(h).val) break;
+    if (best_score / heap_top(h).val >= 1.0 - G_MINFLOAT) break;
     heap_insert_max(h, best_sentence, best_score);
   }
   *score_ptr = best_score;

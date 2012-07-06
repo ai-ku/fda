@@ -1,17 +1,18 @@
 #include "fda.h"
+const char *usage = "Usage: fda [opts] file1 file2";
 
 /* Default options */
-guint verbosity_level = 1;
-guint ngram_order = 3;
-guint output_words = 100000;
-double idf_exponent = 1.0;
-double ngram_length_exponent = 1.0;
-double decay_factor = 0.5;
-double sentence_length_exponent = 1.0;
-char *test_file1 = NULL;
-char *test_file2 = NULL;
-char *train_file1 = NULL;
-char *train_file2 = NULL;
+guint verbosity_level = 1;	/* -v2 more detail, -v0 no messages */
+guint ngram_order = 3;		/* -n max ngram order, eval always uses bigrams */
+guint max_output_words = 0;	/* -t0 no limit, otherwise stop when -t reached */
+double idf_exponent = 1.0;	/* -i <i> means fscore0 *= idf^i */
+double ngram_length_exponent = 1.0; /* -l <l> means fscore0 *= ngram^l */
+double decay_factor = 0.5;	/* -f <f> means fscore1 = fscore0 * f^cnt, f=0 no decay, f=1 1/cnt decay */
+double sentence_length_exponent = 1.0; /* -s <s> means sscore = sum_fscore1/slen^s */
+char *test_file1 = NULL;	/* -1 gives source language test file */
+char *test_file2 = NULL;	/* -2 gives target language test file */
+char *train_file1 = NULL;	/* first arg gives source language train file */
+char *train_file2 = NULL;	/* second arg gives target language train file */
 
 int main(int argc, char **argv) {
   g_message_init();
@@ -19,7 +20,7 @@ int main(int argc, char **argv) {
   while ((opt = getopt(argc, argv, "n:t:i:l:f:s:v:1:2:")) != -1) {
     switch (opt) {
     case 'n': ngram_order = atoi(optarg); break;
-    case 't': output_words = atoi(optarg); break;
+    case 't': max_output_words = atoi(optarg); break;
     case 'i': idf_exponent = atof(optarg); break;
     case 'l': ngram_length_exponent = atof(optarg); break;
     case 'f': decay_factor = atof(optarg); break;
@@ -31,7 +32,7 @@ int main(int argc, char **argv) {
     }
   }
   // optind is the first nonoption arg
-  if (optind != argc - 2) g_error("Usage: fda [opts] file1 file2");
+  if (optind != argc - 2) g_error(usage);
   train_file1 = argv[optind++];
   train_file2 = argv[optind++];
   
@@ -78,12 +79,12 @@ int main(int argc, char **argv) {
     print_sentence(s1); putchar('\t'); print_sentence(s2);
     printf("\t%g\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", best_score, nscore, nword1, 
 	   nword2, bigram_cnt1, bigram_cnt2, bigram_match1, bigram_match2);
-    if (nword1 >= output_words) break;
+    if (max_output_words > 0 && nword1 >= max_output_words) break;
   }
   minialloc_free_all();
   msg1("-1%s -2%s -f%g -i%g -l%g -n%d -s%g -t%d -v%d %s %s\t%d\t%d\t%d\t%d\t%d\t%d",
        test_file1, test_file2, decay_factor, idf_exponent, ngram_length_exponent,
-       ngram_order, sentence_length_exponent, output_words, verbosity_level,
+       ngram_order, sentence_length_exponent, max_output_words, verbosity_level,
        train_file1, train_file2, nword1, nword2, bigram_cnt1, bigram_cnt2, 
        bigram_match1, bigram_match2);
 }

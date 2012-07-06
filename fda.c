@@ -32,7 +32,7 @@ int main(int argc, char **argv) {
     }
   }
   // optind is the first nonoption arg
-  if (optind != argc - 2) g_error(usage);
+  if (optind != argc - 2) g_error("%s", usage);
   train_file1 = argv[optind++];
   train_file2 = argv[optind++];
   

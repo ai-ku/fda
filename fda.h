@@ -15,8 +15,8 @@
 typedef struct feat_s {
   guint train_cnt;
   guint output_cnt;
-  double fscore0;
-  double fscore1;
+  double logscore0;
+  double logscore1;
 } *feat_t;
 
 /* Functions */
@@ -25,7 +25,7 @@ static GHashTable *init_features(GPtrArray *sent, guint *bgcnt_ptr);
 static guint init_train_count(GHashTable *feats, GPtrArray *sent);
 static void init_feature_scores(gpointer key, gpointer val, gpointer dat);
 static Heap init_sentence_heap(GHashTable *feat, GPtrArray *sent);
-static gfloat sentence_score(Sentence s, GHashTable *feat);
+static gfloat sentence_logscore(Sentence s, GHashTable *feat);
 static guint next_best_training_instance(Heap h, GPtrArray *sent, GHashTable *feat, gfloat *score_ptr, guint *niter_ptr);
 static guint update_counts(GHashTable *feat, Sentence s);
 

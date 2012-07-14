@@ -97,7 +97,7 @@ static GHashTable *init_features(GPtrArray *sent, guint *bigram_cnt) {
     foreach_ngram(ng, s) {
       if (g_hash_table_lookup(feats, ng) == NULL) {
 	feat_t f = minialloc(sizeof(struct feat_s));
-	f->output_cnt = 0; f->train_cnt = 0; f->fscore0 = 0; f->fscore1 = 0;
+	f->output_cnt = 0; f->train_cnt = 0; f->logscore0 = 0; f->logscore1 = 0;
 	g_hash_table_insert(feats, ngram_dup(ng), f);
 	if (ngram_size(ng) == 2) (*bigram_cnt)++;
       }
@@ -122,22 +122,18 @@ static guint init_train_count(GHashTable *feats, GPtrArray *sent) {
 static void init_feature_scores(gpointer key, gpointer val, gpointer dat) {
   Ngram ng = key;
   feat_t f = val;
-  f->fscore0 = 1;
+  f->logscore0 = 0;
   if (ngram_length_exponent != 0) {
-    double x = (double) ngram_size(ng);
-    if (ngram_length_exponent != 1) 
-      x = pow(x, ngram_length_exponent);
-    f->fscore0 *= x;
+    f->logscore0 += log(ngram_size(ng)) * ngram_length_exponent;
   }
   if (idf_exponent != 0) {
     guint *train_size1 = dat;
     guint fcnt = f->train_cnt;
     if (fcnt == 0) fcnt = 1;
     double idf = -log((double) fcnt / (double) (*train_size1));
-    if (idf_exponent != 1) idf = pow(idf, idf_exponent);
-    f->fscore0 *= idf;
+    f->logscore0 += log(idf) * idf_exponent;
   }
-  f->fscore1 = f->fscore0;
+  f->logscore1 = f->logscore0;
 }
 
 static Heap init_sentence_heap(GHashTable *feat, GPtrArray *sent) {
@@ -145,25 +141,31 @@ static Heap init_sentence_heap(GHashTable *feat, GPtrArray *sent) {
   heap_size(heap) = 0;
   for (guint si = 0; si < sent->len; si++) {
     Sentence s = g_ptr_array_index(sent, si);
-    gfloat sscore = (gfloat) sentence_score(s, feat);
-    heap_insert_max(heap, si, sscore);
+    gfloat logscore = sentence_logscore(s, feat);
+    if (isfinite(logscore)) heap_insert_max(heap, si, logscore);
   }
   return heap;
 }
 
-static gfloat sentence_score(Sentence s, GHashTable *feat) {
-  gfloat score = 0;
+static gfloat sentence_logscore(Sentence s, GHashTable *feat) {
+  double sscore = -INFINITY;
   foreach_ngram(ng, s) {
     feat_t f = g_hash_table_lookup(feat, ng);
-    if (f != NULL) score += f->fscore1;
+    if (f != NULL) {
+      double fscore = f->logscore1;
+      if (!isfinite(sscore)) {
+	sscore = fscore;
+      } else if (fscore <= sscore) {
+	sscore = sscore + log(1 + exp(fscore - sscore));
+      } else {
+	sscore = fscore + log(1 + exp(sscore - fscore));
+      }
+    }
   }
   if ((sentence_length_exponent != 0) && (sentence_size(s) > 0)) {
-    double x = (double) sentence_size(s);
-    if (sentence_length_exponent != 1)
-      x = pow(x, sentence_length_exponent);
-    score /= x;
+    sscore -= log(sentence_size(s)) * sentence_length_exponent;
   }
-  return score;
+  return ((gfloat) sscore);
 }
 
 static guint next_best_training_instance(Heap h, GPtrArray *sent, GHashTable *feat, gfloat *score_ptr, guint *niter_ptr) {
@@ -174,10 +176,11 @@ static guint next_best_training_instance(Heap h, GPtrArray *sent, GHashTable *fe
   while (1) {
     niter++;
     best_sentence = heap_top(h).key;
-    best_score = sentence_score(g_ptr_array_index(sent, best_sentence), feat);
+    best_score = sentence_logscore(g_ptr_array_index(sent, best_sentence), feat);
+    g_assert(isfinite(best_score));
     heap_delete_max(h);
     if (heap_size(h) == 0) break;
-    if (best_score / heap_top(h).val >= 1.0 - G_MINFLOAT) break;
+    if (best_score - heap_top(h).val >= -G_MINFLOAT) break;
     heap_insert_max(h, best_sentence, best_score);
   }
   *score_ptr = best_score;
@@ -193,9 +196,9 @@ static guint update_counts(GHashTable *feat, Sentence s) {
       if ((ngram_size(ng) == 2) && (f->output_cnt == 0)) bigram_match++;
       f->output_cnt++;
       if (decay_factor >= 1) {
-	f->fscore1 = f->fscore0 / (1.0 + f->output_cnt);
+	f->logscore1 = f->logscore0 - log(1.0 + f->output_cnt);
       } else if (decay_factor > 0) {
-	f->fscore1 = f->fscore0 * pow(decay_factor, f->output_cnt);
+	f->logscore1 = f->logscore0 + f->output_cnt * log(decay_factor);
       }
     }
   }

@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <math.h>
 #include <glib.h>
+#include <zlib.h>
 #include "procinfo.h"
 #include "foreach.h"
 #include "minialloc.h"

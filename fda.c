@@ -1,58 +1,111 @@
 #include "fda.h"
-const char *usage = "Usage: fda [opts] file1 file2";
+const char *usage = "Usage: fda [opts] train1 test1 [train2] [test2]\n"
+  "train1: first (mandatory) arg gives source language train file\n"
+  "test1 : second (mandatory) arg gives source language test file\n"
+  "train2: third (optional) arg gives target language train file\n"
+  "        this is used to output target sentences as a second column\n"
+  "test2 : fourth (optional) arg gives target language test file\n"
+  "        this is used to calculate metrics like bigram coverage\n"
+  "If any of these arguments are \"-\", the data is read from stdin.\n"
+  "Gzip compressed files are automatically recognized and handled.\n"
+  "Other options (and defaults) are:\n"
+  "-v (1): verbosity level, -v0 no messages, -v2 more detail\n"
+  "-n (3): maximum ngram order for features\n"
+  "-t (0): number of training words output, -t0 means no limit\n"
+  "-o (null): output file, stdout is used if not specified\n"
+  "The rest of the options are used to calculate feature and sentence scores:\n"
+  "-i (1.0): initial feature score idf exponent\n"
+  "-l (1.0): initial feature score ngram length exponent\n"
+  "-d (0.5): final feature score decay factor\n"
+  "-c (0.0): final feature score decay exponent\n"
+  "-s (1.0): sentence score length exponent\n"
+  "Formulas:\n"
+  "initial feature score: fscore0 = idf^i * ngram^l\n"
+  "final feature score  : fscore1 = fscore0 * d^cnt * cnt^(-c)\n"
+  "sentence score       : sscore  = sum_fscore1 * slen^(-s)\n"
+;
 
 /* Default options */
-guint verbosity_level = 1;	/* -v2 more detail, -v0 no messages */
-guint ngram_order = 3;		/* -n max ngram order, eval always uses bigrams */
-guint max_output_words = 0;	/* -t0 no limit, otherwise stop when -t reached */
-double idf_exponent = 1.0;	/* -i <i> means fscore0 *= idf^i */
-double ngram_length_exponent = 1.0; /* -l <l> means fscore0 *= ngram^l */
-double decay_factor = 0.5;	/* -f <f> means fscore1 = fscore0 * f^cnt, f=0 no decay, f=1 1/cnt decay */
-double sentence_length_exponent = 1.0; /* -s <s> means sscore = sum_fscore1/slen^s */
-char *test_file1 = NULL;	/* -1 gives source language test file */
-char *test_file2 = NULL;	/* -2 gives target language test file */
-char *train_file1 = NULL;	/* first arg gives source language train file */
-char *train_file2 = NULL;	/* second arg gives target language train file */
+guint verbosity_level = 1;
+guint ngram_order = 3;
+guint max_output_words = 0;
+double idf_exponent = 1.0;
+double ngram_length_exponent = 1.0;
+double decay_factor = 0.5;
+double decay_exponent = 0.0;
+double sentence_length_exponent = 1.0;
+char *train_file1 = NULL;
+char *test_file1 = NULL;
+char *train_file2 = NULL;
+char *test_file2 = NULL;
+char *output_file = NULL;
 
 int main(int argc, char **argv) {
   g_message_init();
   int opt;
-  while ((opt = getopt(argc, argv, "n:t:i:l:f:s:v:1:2:")) != -1) {
+  while ((opt = getopt(argc, argv, "v:t:n:s:i:l:d:c:o:")) != -1) {
     switch (opt) {
-    case 'n': ngram_order = atoi(optarg); break;
+    case 'v': verbosity_level = atoi(optarg); break;
     case 't': max_output_words = atoi(optarg); break;
+    case 'n': ngram_order = atoi(optarg); break;
+    case 's': sentence_length_exponent = atof(optarg); break;
     case 'i': idf_exponent = atof(optarg); break;
     case 'l': ngram_length_exponent = atof(optarg); break;
-    case 'f': decay_factor = atof(optarg); break;
-    case 's': sentence_length_exponent = atof(optarg); break;
-    case 'v': verbosity_level = atoi(optarg); break;
-    case '1': test_file1 = optarg; break;
-    case '2': test_file2 = optarg; break;
-    default: g_error("Bad option -%c", opt); break;
+    case 'd': decay_factor = atof(optarg); break;
+    case 'c': decay_exponent = atof(optarg); break;
+    case 'o': output_file = optarg; break;
+    default: g_error("ERROR: Bad option -%c\n%s", opt, usage); break;
     }
   }
+
+  GPtrArray *test1 = NULL;
+  GPtrArray *train1 = NULL;
+  GPtrArray *test2 = NULL;
+  GPtrArray *train2 = NULL;
+
   // optind is the first nonoption arg
-  if (optind != argc - 2) g_error("%s", usage);
-  train_file1 = argv[optind++];
-  train_file2 = argv[optind++];
-  
-  msg2("Reading %s...", train_file1);
-  GPtrArray *train1 = read_sentences(train_file1);
-  msg2("Reading %s...", train_file2);
-  GPtrArray *train2 = read_sentences(train_file2);
-  g_assert(train1->len == train2->len);
 
-  msg2("Reading %s...", test_file1);
-  GPtrArray *test1 = read_sentences(test_file1);
-  msg2("Reading %s...", test_file2);
-  GPtrArray *test2 = read_sentences(test_file2);
-  g_assert(test1->len == test2->len);
+  if (optind < argc) {
+    train_file1 = argv[optind++];
+    msg2("Reading train1 from %s...", train_file1);
+    train1 = read_sentences(train_file1);
+  } else {
+    g_error("%s", usage);
+  }
 
-  guint bigram_cnt1, bigram_cnt2;
+  if (optind < argc) {
+    test_file1 = argv[optind++];
+    msg2("Reading test1 from %s...", test_file1);
+    test1 = read_sentences(test_file1);
+  } else {
+    g_error("%s", usage);
+  }
+
+  if (optind < argc) {
+    train_file2 = argv[optind++];
+    msg2("Reading train2 from %s...", train_file2);
+    train2 = read_sentences(train_file2);
+    g_assert(train2->len == train1->len);
+  }
+
+  if (optind < argc) {
+    test_file2 = argv[optind++];
+    msg2("Reading test2 from %s...", test_file2);
+    test2 = read_sentences(test_file2);
+    g_assert(test2->len == test1->len);
+  }
+  g_assert(optind == argc);
+
+  GHashTable *features1 = NULL;
+  GHashTable *features2 = NULL;
+  guint bigram_cnt1 = 0;
+  guint bigram_cnt2 = 0;
   msg2("init_features1");
-  GHashTable *features1 = init_features(test1, &bigram_cnt1);
-  msg2("init_features2");
-  GHashTable *features2 = init_features(test2, &bigram_cnt2);
+  features1 = init_features(test1, &bigram_cnt1);
+  if (test2 != NULL) {
+    msg2("init_features2");
+    features2 = init_features(test2, &bigram_cnt2);
+  }
   msg2("init_train_count");
   guint train_size1 = (idf_exponent == 0) ? 0 : init_train_count(features1, train1);
   msg2("init_feature_scores");
@@ -65,28 +118,36 @@ int main(int argc, char **argv) {
   guint bigram_match2 = 0;
   
   msg2("Writing...");
+  FILE *out = (output_file ? fopen(output_file, "w") : stdout);
   while (1) {
     if (heap_size(heap) == 0) break;
     gfloat best_score = 0;
     guint nscore = 0;
     guint best_sentence = next_best_training_instance(heap, train1, features1, &best_score, &nscore);
-    Sentence s1 = g_ptr_array_index(train1, best_sentence);
-    Sentence s2 = g_ptr_array_index(train2, best_sentence);
+    Sentence s1 = NULL;
+    Sentence s2 = NULL;
+    s1 = g_ptr_array_index(train1, best_sentence);
     nword1 += sentence_size(s1);
-    nword2 += sentence_size(s2);
     bigram_match1 += update_counts(features1, s1);
-    bigram_match2 += update_counts(features2, s2);
-    print_sentence(s1); putchar('\t'); print_sentence(s2);
-    printf("\t%g\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", best_score, nscore, nword1, 
-	   nword2, bigram_cnt1, bigram_cnt2, bigram_match1, bigram_match2);
+    fprint_sentence(s1, out); 
+    if (train2 != NULL) {
+      s2 = g_ptr_array_index(train2, best_sentence);
+      nword2 += sentence_size(s2);
+      bigram_match2 += update_counts(features2, s2);
+      fputc('\t', out); fprint_sentence(s2, out);
+    }
+    fprintf(out, "\t%g\t%d\t%d\t%d\t%d", best_score, nscore, nword1, bigram_cnt1, bigram_match1);
+    if (train2 != NULL) fprintf(out, "\t%d\t%d\t%d", nword2, bigram_cnt2, bigram_match2);
+    fputc('\n', out);
     if (max_output_words > 0 && nword1 >= max_output_words) break;
   }
   minialloc_free_all();
-  msg1("-1%s -2%s -f%g -i%g -l%g -n%d -s%g -t%d -v%d %s %s\t%d\t%d\t%d\t%d\t%d\t%d",
-       test_file1, test_file2, decay_factor, idf_exponent, ngram_length_exponent,
-       ngram_order, sentence_length_exponent, max_output_words, verbosity_level,
-       train_file1, train_file2, nword1, nword2, bigram_cnt1, bigram_cnt2, 
-       bigram_match1, bigram_match2);
+
+  msg1("-v%d -n%d -t%d -o%s -i%g -l%g -d%g -c%g -s%g %s %s %s %s\t%d\t%d\t%d\t%d\t%d\t%d",
+       verbosity_level, ngram_order, max_output_words, (output_file ? output_file : "-"),
+       idf_exponent, ngram_length_exponent, decay_factor, decay_exponent, sentence_length_exponent, 
+       train_file1, test_file1, (train_file2 ? train_file2 : ""), (test_file2 ? test_file2 : ""), 
+       nword1, bigram_cnt1, bigram_match1, nword2, bigram_cnt2, bigram_match2);
 }
 
 static GHashTable *init_features(GPtrArray *sent, guint *bigram_cnt) {
@@ -195,11 +256,7 @@ static guint update_counts(GHashTable *feat, Sentence s) {
     if (f != NULL) {
       if ((ngram_size(ng) == 2) && (f->output_cnt == 0)) bigram_match++;
       f->output_cnt++;
-      if (decay_factor >= 1) {
-	f->logscore1 = f->logscore0 - log(1.0 + f->output_cnt);
-      } else if (decay_factor > 0) {
-	f->logscore1 = f->logscore0 + f->output_cnt * log(decay_factor);
-      }
+      f->logscore1 = f->logscore0 + f->output_cnt * log(decay_factor) - decay_exponent * log(1.0 + f->output_cnt);
     }
   }
   return bigram_match;

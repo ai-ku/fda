@@ -12,6 +12,7 @@ typedef Token *Sentence;
 Sentence read_sentence(Sentence st, char *str, guint nmax);
 Sentence copy_sentence(Sentence s);
 void print_sentence(Sentence s);
+void fprint_sentence(Sentence s, FILE *out);
 GPtrArray *read_sentences(char *file);
 
 #endif

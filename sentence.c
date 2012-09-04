@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <glib.h>
+#include <zlib.h>
 #include "foreach.h"
 #include "minialloc.h"
 #include "sentence.h"
@@ -32,9 +33,17 @@ void print_sentence(Sentence s) {
   }
 }
 
+void fprint_sentence(Sentence s, FILE *out) {
+  for (int i = 1; i <= sentence_size(s); i++) {
+    if (i > 1) fputc(' ', out);
+    fputs(token_to_string(s[i]), out);
+  }
+}
+
 GPtrArray *read_sentences(char *file) {
   GPtrArray *sents = g_ptr_array_new();
   Token s[SMAX];
+  if (!strcmp(file, "-")) file = NULL;
   foreach_line(str, file) {
     g_ptr_array_add(sents, copy_sentence(read_sentence(s, str, SMAX-1)));
   }

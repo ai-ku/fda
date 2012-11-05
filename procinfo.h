@@ -85,6 +85,7 @@ static void my_log_func(const gchar *log_domain,
 static void g_message_init()
 {
   g_log_set_handler(NULL, G_LOG_LEVEL_MESSAGE, my_log_func, NULL);
+  runtime();
 }
 
 #endif

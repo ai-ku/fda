@@ -3,3 +3,5 @@
 .nfs*
 fda
 data
+papers
+.DS_Store
